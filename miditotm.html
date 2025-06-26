@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MIDI to Trailmakers Converter</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      background: #181818;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #222;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+      border-bottom: 2px solid #0af;
+      user-select: none;
+    }
+    #controls {
+      padding: 0.5rem 1rem;
+      background: #222;
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      border-bottom: 1px solid #444;
+      align-items: center;
+    }
+    #controls input[type="file"] {
+      background: #333;
+      color: #eee;
+      border: none;
+      padding: 0.3rem 0.5rem;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    #controls button {
+      background: #0af;
+      border: none;
+      padding: 0.5rem 1rem;
+      color: #111;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+    #controls button:hover {
+      background: #07c;
+      color: #fff;
+    }
+    #controls label {
+      font-size: 14px;
+      user-select: none;
+    }
+    #zoomSlider {
+      width: 150px;
+    }
+
+    #visualizerContainer {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #222;
+      border-top: 1px solid #333;
+      border-bottom: 1px solid #333;
+      user-select: none;
+      position: relative;
+    }
+
+    #timeline {
+      position: relative;
+      height: 600px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: #111;
+      border-bottom: 2px solid #0af;
+      white-space: nowrap;
+    }
+
+    #timelineContent {
+      position: relative;
+      height: 600px;
+      user-select: none;
+    }
+
+    /* Thinner notes */
+    .note {
+      position: absolute;
+      height: 14px;
+      background: rgba(0, 128, 255, 0.8);
+      border: 1px solid #07f;
+      color: white;
+      text-align: center;
+      font-size: 12px;
+      line-height: 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note:hover {
+      background: #0af;
+      border-color: #0ff;
+    }
+
+    .playhead {
+      position: fixed;
+      width: 3px;
+      background: #ff5555;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      box-shadow: 0 0 10px 2px #f00;
+      pointer-events: none;
+    }
+
+    #timeRuler {
+      height: 30px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: #222;
+      border-top: 1px solid #444;
+      border-bottom: 1px solid #444;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    #timeRulerContent {
+      position: relative;
+      height: 30px;
+      user-select: none;
+    }
+
+    .timeMark {
+      position: absolute;
+      top: 0;
+      height: 30px;
+      border-left: 1px solid #555;
+      color: #ccc;
+      padding-left: 3px;
+      box-sizing: border-box;
+      font-size: 12px;
+      font-family: monospace;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #currentTimeDisplay {
+      background: #222;
+      color: #0af;
+      padding: 0.5rem 1rem;
+      font-family: monospace;
+      font-size: 1rem;
+      text-align: center;
+      user-select: none;
+      border-top: 1px solid #333;
+      border-bottom: 1px solid #333;
+    }
+
+    /* Tooltip styling */
+    #tooltip {
+      position: fixed;
+      padding: 4px 8px;
+      background: #222;
+      color: #0af;
+      font-family: monospace;
+      font-size: 12px;
+      border: 1px solid #0af;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 50;
+      white-space: nowrap;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <header>MIDI to Trailmakers Converter - By Somebody</header>
+  <div id="controls">
+    <input type="file" id="midiFile" accept=".mid" />
+    <button onclick="parseMIDI()">Display</button>
+    <button onclick="startPlayback()">Play</button>
+    <button onclick="pausePlayback()">Pause</button>
+    <button onclick="stopPlayback()">Stop</button>
+    <label for="zoomSlider">Zoom:</label>
+    <input type="range" id="zoomSlider" min="100" max="800" value="300" />
+  </div>
+
+  <div id="visualizerContainer">
+    <div id="timeline">
+      <div id="timelineContent"></div>
+    </div>
+    <div id="timeRuler">
+      <div id="timeRulerContent"></div>
+    </div>
+  </div>
+
+  <div id="currentTimeDisplay">Time: 0.00s</div>
+
+  <div id="playhead" class="playhead"></div>
+  <div id="tooltip"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/midi-parser-js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tone@latest/build/Tone.js"></script>
+  <script>
+    const semitoneToCustom = {
+      0: 0, 1: 1, 2: 2, 3: 3, 4: 4,
+      5: 5, 6: 6, 7: 7, 8: 8, 9: 9,
+      10: 10, 11: 11
+    };
+
+    const MIN_NOTE_VALUE = -24;
+    const MAX_NOTE_VALUE = 24;
+
+    let parsedNotes = [];
+    let playhead = document.getElementById('playhead');
+    let playheadInterval = null;
+    let maxTime = 0;
+    let part = null;
+    let isPlaying = false;
+
+    // Initial scales (timeScale controls horizontal zoom)
+    let timeScale = 300;
+    let pitchScale = 600 / (MAX_NOTE_VALUE - MIN_NOTE_VALUE); // Vertical scale fills timeline height
+
+    let negativePadding = 0;
+
+    const header = document.querySelector('header');
+    const controls = document.getElementById('controls');
+    const timeline = document.getElementById('timeline');
+    const timelineContent = document.getElementById('timelineContent');
+    const timeRuler = document.getElementById('timeRuler');
+    const timeRulerContent = document.getElementById('timeRulerContent');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const currentTimeDisplay = document.getElementById('currentTimeDisplay');
+    const tooltip = document.getElementById('tooltip');
+
+    // Sync scroll between timeline and time ruler
+    timeline.addEventListener('scroll', () => {
+      timeRuler.scrollLeft = timeline.scrollLeft;
+    });
+    timeRuler.addEventListener('scroll', () => {
+      timeline.scrollLeft = timeRuler.scrollLeft;
+    });
+
+    function updatePlayheadPosition() {
+      const headerBottom = header.getBoundingClientRect().bottom;
+      const controlsBottom = controls.getBoundingClientRect().bottom;
+      const timeRulerBottom = timeRuler.getBoundingClientRect().bottom;
+
+      // Place playhead top just below header and controls bar (whichever is lower)
+      const topPos = Math.max(headerBottom, controlsBottom) + 2; // 2px margin
+
+      // Set playhead top and height so it extends to bottom of timeRuler
+      playhead.style.top = `${topPos}px`;
+      playhead.style.height = `${timeRulerBottom - topPos}px`;
+    }
+
+    function createTimeMarks() {
+      timeRulerContent.innerHTML = '';
+      if (maxTime <= 0) return;
+
+      const markInterval = 0.5;
+      const totalMarks = Math.ceil(maxTime / markInterval) + 1;
+
+      for (let i = 0; i < totalMarks; i++) {
+        const time = (i * markInterval).toFixed(2);
+        const posX = (i * markInterval + negativePadding) * timeScale;
+
+        const mark = document.createElement('div');
+        mark.className = 'timeMark';
+        mark.style.left = posX + 'px';
+        mark.textContent = time;
+        timeRulerContent.appendChild(mark);
+      }
+
+      const minWidth = timeline.clientWidth;
+      const contentWidth = Math.max((maxTime + negativePadding) * timeScale, minWidth);
+
+      timelineContent.style.width = contentWidth + 'px';
+      timeRulerContent.style.width = contentWidth + 'px';
+    }
+
+    function parseMIDI() {
+      const fileInput = document.getElementById('midiFile');
+      timelineContent.innerHTML = '';
+      parsedNotes = [];
+      maxTime = 0;
+      negativePadding = 0;
+      isPlaying = false;
+      if (part) {
+        part.dispose();
+        part = null;
+      }
+      Tone.Transport.stop();
+      Tone.Transport.position = 0;
+      clearInterval(playheadInterval);
+      currentTimeDisplay.textContent = 'Time: 0.00s';
+
+      if (!fileInput.files.length) {
+        alert('Please upload a .mid file.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const midiArray = new Uint8Array(e.target.result);
+        const midiData = MidiParser.parse(midiArray);
+
+        const activeNotes = new Map();
+        let time = 0;
+        midiData.track.forEach(track => {
+          track.event.forEach(event => {
+            if (event.deltaTime) time += event.deltaTime;
+
+            if (event.type === 9 && event.data && event.data.length > 1) {
+              const midi = event.data[0];
+              const velocity = event.data[1];
+
+              if (velocity > 0) {
+                activeNotes.set(midi, time / 1000);
+              } else {
+                if (activeNotes.has(midi)) {
+                  const startTime = activeNotes.get(midi);
+                  const duration = (time / 1000) - startTime;
+                  activeNotes.delete(midi);
+                  addNoteIfValid(midi, velocity, startTime, duration);
+                }
+              }
+            } else if (event.type === 8 && event.data && event.data.length > 0) {
+              const midi = event.data[0];
+              if (activeNotes.has(midi)) {
+                const startTime = activeNotes.get(midi);
+                const duration = (time / 1000) - startTime;
+                activeNotes.delete(midi);
+                addNoteIfValid(midi, 0, startTime, duration);
+              }
+            }
+          });
+        });
+
+        activeNotes.forEach((startTime, midi) => {
+          addNoteIfValid(midi, 127, startTime, 0.4);
+        });
+
+        // Remove duplicates that overlap exactly
+        parsedNotes = parsedNotes.filter((note, index, self) =>
+          index === self.findIndex(n => n.time === note.time && n.duration === note.duration && n.midi === note.midi)
+        );
+
+        parsedNotes.sort((a,b) => a.time - b.time);
+
+        // Calculate negative padding so first note starts centered horizontally
+        if (parsedNotes.length > 0) {
+          const firstNoteStart = parsedNotes[0].time;
+          negativePadding = timeline.clientWidth / 2 / timeScale - firstNoteStart;
+          if (negativePadding < 0) negativePadding = 0;
+        }
+
+        // Create notes divs with positions and widths, attach note data to divs
+        pitchScale = timeline.clientHeight / (MAX_NOTE_VALUE - MIN_NOTE_VALUE);
+        parsedNotes.forEach(note => {
+          const semitone = note.midi % 12;
+          const octaveOffset = Math.floor(note.midi / 12) - 5;
+          const baseValue = semitoneToCustom[semitone];
+          const value = baseValue + octaveOffset * 12;
+          if (value < MIN_NOTE_VALUE || value > MAX_NOTE_VALUE) return;
+
+          const noteDiv = document.createElement('div');
+          noteDiv.className = 'note';
+          noteDiv.style.left = ((note.time + negativePadding) * timeScale) + 'px';
+          noteDiv.style.top = pitchScale * (MAX_NOTE_VALUE - value) + 'px';
+          noteDiv.style.width = (note.duration * timeScale) + 'px';
+          noteDiv.textContent = value;
+          noteDiv.draggable = true;
+          noteDiv.noteData = note;
+          timelineContent.appendChild(noteDiv);
+
+          // Add hover event listeners for tooltip
+          noteDiv.addEventListener('mouseenter', (e) => {
+            tooltip.textContent = `Time: ${note.time.toFixed(2)}s`;
+            tooltip.style.opacity = '1';
+          });
+          noteDiv.addEventListener('mousemove', (e) => {
+            // Position tooltip 10px right and 10px down from cursor
+            const tooltipWidth = tooltip.offsetWidth;
+            const tooltipHeight = tooltip.offsetHeight;
+            let left = e.clientX + 10;
+            let top = e.clientY + 10;
+
+            // Keep tooltip inside viewport horizontally
+            if (left + tooltipWidth > window.innerWidth) {
+              left = e.clientX - tooltipWidth - 10;
+            }
+            // Keep tooltip inside viewport vertically
+            if (top + tooltipHeight > window.innerHeight) {
+              top = e.clientY - tooltipHeight - 10;
+            }
+
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+          });
+          noteDiv.addEventListener('mouseleave', () => {
+            tooltip.style.opacity = '0';
+          });
+
+          if (note.time + note.duration > maxTime) maxTime = note.time + note.duration;
+        });
+
+        createTimeMarks();
+
+        if (part) part.dispose();
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        part = new Tone.Part((time, note) => {
+          synth.triggerAttackRelease(
+            Tone.Frequency(note.midi, 'midi'),
+            note.duration,
+            time,
+            note.velocity
+          );
+        }, parsedNotes.map(note => [note.time, note]));
+        part.start(0);
+
+        Tone.Transport.stop();
+        Tone.Transport.position = 0;
+
+        updatePlayheadPosition();
+
+        timeline.scrollLeft = 0;
+        timeRuler.scrollLeft = 0;
+      };
+
+      reader.readAsArrayBuffer(fileInput.files[0]);
+    }
+
+    function addNoteIfValid(midi, velocity, startTime, duration) {
+      if (duration <= 0) return;
+      parsedNotes.push({
+        midi,
+        velocity: velocity / 127 || 0.8,
+        time: startTime,
+        duration
+      });
+    }
+
+    async function startPlayback() {
+      await Tone.start();
+      if (!part || parsedNotes.length === 0) {
+        alert('Please load a MIDI file first!');
+        return;
+      }
+
+      if (Tone.Transport.state === 'paused') {
+        Tone.Transport.start();
+        playStartTime = Tone.now() - Tone.Transport.seconds;
+      } else if (Tone.Transport.state !== 'started') {
+        Tone.Transport.position = 0;
+        part.start(0);
+        Tone.Transport.start();
+        playStartTime = Tone.now();
+      }
+      isPlaying = true;
+
+      clearInterval(playheadInterval);
+      playheadInterval = setInterval(() => {
+        const currentTime = Tone.now() - playStartTime;
+        currentTimeDisplay.textContent = 'Time: ' + currentTime.toFixed(2) + 's';
+
+        // Scroll timeline so playhead stays centered
+        const px = (currentTime + negativePadding) * timeScale;
+        timeline.scrollLeft = px - timeline.clientWidth / 2;
+        timeRuler.scrollLeft = timeline.scrollLeft;
+
+        if (currentTime > maxTime + 1) {
+          stopPlayback();
+        }
+      }, 30);
+    }
+
+    function pausePlayback() {
+      if (Tone.Transport.state === 'started') {
+        Tone.Transport.pause();
+        clearInterval(playheadInterval);
+        isPlaying = false;
+      }
+    }
+
+    function stopPlayback() {
+      Tone.Transport.stop();
+      Tone.Transport.position = 0;
+      if (part) part.stop();
+      clearInterval(playheadInterval);
+      isPlaying = false;
+      currentTimeDisplay.textContent = 'Time: 0.00s';
+      timeline.scrollLeft = 0;
+      timeRuler.scrollLeft = 0;
+    }
+
+    // Zoom handler updates note positions and widths, timeline and ruler widths
+    zoomSlider.addEventListener('input', (e) => {
+      timeScale = parseInt(e.target.value);
+      if (parsedNotes.length > 0) {
+        pitchScale = timeline.clientHeight / (MAX_NOTE_VALUE - MIN_NOTE_VALUE);
+        maxTime = 0;
+
+        Array.from(timelineContent.children).forEach(noteDiv => {
+          if (!noteDiv.noteData) return;
+          const note = noteDiv.noteData;
+          const semitone = note.midi % 12;
+          const octaveOffset = Math.floor(note.midi / 12) - 5;
+          const baseValue = semitoneToCustom[semitone];
+          const value = baseValue + octaveOffset * 12;
+
+          const leftPx = (note.time + negativePadding) * timeScale;
+          const topPx = pitchScale * (MAX_NOTE_VALUE - value);
+
+          noteDiv.style.left = leftPx + 'px';
+          noteDiv.style.top = topPx + 'px';
+          noteDiv.style.width = note.duration * timeScale + 'px';
+
+          if (note.time + note.duration > maxTime) maxTime = note.time + note.duration;
+        });
+
+        const minWidth = timeline.clientWidth;
+        const contentWidth = Math.max((maxTime + negativePadding) * timeScale, minWidth);
+        timelineContent.style.width = contentWidth + 'px';
+        timeRulerContent.style.width = contentWidth + 'px';
+
+        createTimeMarks();
+
+        // Adjust scroll so playhead remains centered on current time
+        let currentTime = Tone.Transport.seconds || 0;
+        const px = (currentTime + negativePadding) * timeScale;
+        timeline.scrollLeft = px - timeline.clientWidth / 2;
+        timeRuler.scrollLeft = timeline.scrollLeft;
+      }
+    });
+
+    // Update playhead position on window resize to keep correct height and top
+    window.addEventListener('resize', updatePlayheadPosition);
+  </script>
+</body>
+</html>
