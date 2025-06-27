@@ -181,11 +181,22 @@
       z-index: 50;
       white-space: nowrap;
       user-select: none;
+
+    #tempoInput {
+     width: 60px;
+     background: #333;
+     color: #eee;
+     border: 1px solid #555;
+     padding: 0.3rem 0.5rem;
+     border-radius: 4px;
+     text-align: right;
+}
+
     }
   </style>
 </head>
 <body>
-  <header>MIDI to Trailmakers Converter - By Somebody</header>
+  <header>MIDI to Trailmakers Converter - By Somebody - v1.1</header>
   <div id="controls">
     <input type="file" id="midiFile" accept=".mid" />
     <button onclick="parseMIDI()">Display</button>
@@ -194,6 +205,8 @@
     <button onclick="stopPlayback()">Stop</button>
     <label for="zoomSlider">Zoom:</label>
     <input type="range" id="zoomSlider" min="100" max="800" value="300" />
+    <label for="tempoInput">Tempo:</label>
+    <input type="number" id="tempoInput" min="20" max="400" value="120" onchange="updateTempo()" />
   </div>
 
   <div id="visualizerContainer">
@@ -213,6 +226,11 @@
   <script src="https://cdn.jsdelivr.net/npm/midi-parser-js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tone@latest/build/Tone.js"></script>
   <script>
+      
+    let tempoMultiplier = 1;
+    const DEFAULT_TEMPO = 120;
+    let alreadyLoaded = false;
+      
     const semitoneToCustom = {
       0: 0, 1: 1, 2: 2, 3: 3, 4: 4,
       5: 5, 6: 6, 7: 7, 8: 8, 9: 9,
@@ -292,6 +310,12 @@
     }
 
     function parseMIDI() {
+      if (alreadyLoaded) {
+      alert("You've already loaded a MIDI. Please refresh the page to load a new one.");
+      return;
+      }
+      alreadyLoaded = true;
+
       const fileInput = document.getElementById('midiFile');
       timelineContent.innerHTML = '';
       parsedNotes = [];
@@ -388,8 +412,8 @@
 
           // Add hover event listeners for tooltip
           noteDiv.addEventListener('mouseenter', (e) => {
-            tooltip.textContent = `Time: ${note.time.toFixed(2)}s`;
-            tooltip.style.opacity = '1';
+          tooltip.textContent = `Time: ${(note.time * tempoMultiplier).toFixed(2)}s`;
+          tooltip.style.opacity = '1';
           });
           noteDiv.addEventListener('mousemove', (e) => {
             // Position tooltip 10px right and 10px down from cursor
@@ -507,47 +531,96 @@
     }
 
     // Zoom handler updates note positions and widths, timeline and ruler widths
-    zoomSlider.addEventListener('input', (e) => {
-      timeScale = parseInt(e.target.value);
-      if (parsedNotes.length > 0) {
-        pitchScale = timeline.clientHeight / (MAX_NOTE_VALUE - MIN_NOTE_VALUE);
-        maxTime = 0;
+zoomSlider.addEventListener('input', (e) => {
+  timeScale = parseInt(e.target.value);
+  if (parsedNotes.length > 0) {
+    pitchScale = timeline.clientHeight / (MAX_NOTE_VALUE - MIN_NOTE_VALUE);
+    maxTime = 0;
 
-        Array.from(timelineContent.children).forEach(noteDiv => {
-          if (!noteDiv.noteData) return;
-          const note = noteDiv.noteData;
-          const semitone = note.midi % 12;
-          const octaveOffset = Math.floor(note.midi / 12) - 5;
-          const baseValue = semitoneToCustom[semitone];
-          const value = baseValue + octaveOffset * 12;
+    Array.from(timelineContent.children).forEach(noteDiv => {
+      if (!noteDiv.noteData) return;
+      const note = noteDiv.noteData;
+      const semitone = note.midi % 12;
+      const octaveOffset = Math.floor(note.midi / 12) - 5;
+      const baseValue = semitoneToCustom[semitone];
+      const value = baseValue + octaveOffset * 12;
 
-          const leftPx = (note.time + negativePadding) * timeScale;
-          const topPx = pitchScale * (MAX_NOTE_VALUE - value);
+      const leftPx = (note.time * tempoMultiplier + negativePadding) * timeScale;
+      const topPx = pitchScale * (MAX_NOTE_VALUE - value);
 
-          noteDiv.style.left = leftPx + 'px';
-          noteDiv.style.top = topPx + 'px';
-          noteDiv.style.width = note.duration * timeScale + 'px';
+      noteDiv.style.left = leftPx + 'px';
+      noteDiv.style.top = topPx + 'px';
+      noteDiv.style.width = (note.duration * tempoMultiplier * timeScale) + 'px';
 
-          if (note.time + note.duration > maxTime) maxTime = note.time + note.duration;
-        });
-
-        const minWidth = timeline.clientWidth;
-        const contentWidth = Math.max((maxTime + negativePadding) * timeScale, minWidth);
-        timelineContent.style.width = contentWidth + 'px';
-        timeRulerContent.style.width = contentWidth + 'px';
-
-        createTimeMarks();
-
-        // Adjust scroll so playhead remains centered on current time
-        let currentTime = Tone.Transport.seconds || 0;
-        const px = (currentTime + negativePadding) * timeScale;
-        timeline.scrollLeft = px - timeline.clientWidth / 2;
-        timeRuler.scrollLeft = timeline.scrollLeft;
-      }
+      if ((note.time * tempoMultiplier) + note.duration > maxTime) maxTime = (note.time * tempoMultiplier) + note.duration;
     });
+
+    const minWidth = timeline.clientWidth;
+    const contentWidth = Math.max((maxTime + negativePadding) * timeScale, minWidth);
+    timelineContent.style.width = contentWidth + 'px';
+    timeRulerContent.style.width = contentWidth + 'px';
+
+    createTimeMarks();
+
+    // Adjust scroll so playhead remains centered on current time
+    let currentTime = Tone.Transport.seconds || 0;
+    const px = (currentTime * tempoMultiplier + negativePadding) * timeScale;
+    timeline.scrollLeft = px - timeline.clientWidth / 2;
+    timeRuler.scrollLeft = timeline.scrollLeft;
+  }
+});
+
 
     // Update playhead position on window resize to keep correct height and top
     window.addEventListener('resize', updatePlayheadPosition);
+
+function updateTempo() {
+  const tempo = parseFloat(document.getElementById('tempoInput').value);
+  if (!isNaN(tempo) && tempo > 0) {
+    // Stop and reset everything
+    stopPlayback();
+
+    // Apply new tempo
+    Tone.Transport.bpm.value = tempo;
+    tempoMultiplier = DEFAULT_TEMPO / tempo;
+
+    // Update visuals
+    updateNotePositions();
+    createTimeMarks();
+  }
+}
+
+
+function updateNotePositions() {
+  if (!parsedNotes.length) return;
+  pitchScale = timeline.clientHeight / (MAX_NOTE_VALUE - MIN_NOTE_VALUE);
+  maxTime = 0;
+
+  Array.from(timelineContent.children).forEach(noteDiv => {
+    if (!noteDiv.noteData) return;
+    const note = noteDiv.noteData;
+    const semitone = note.midi % 12;
+    const octaveOffset = Math.floor(note.midi / 12) - 5;
+    const baseValue = semitoneToCustom[semitone];
+    const value = baseValue + octaveOffset * 12;
+
+    const leftPx = (note.time * tempoMultiplier + negativePadding) * timeScale;
+    const topPx = pitchScale * (MAX_NOTE_VALUE - value);
+
+    noteDiv.style.left = leftPx + 'px';
+    noteDiv.style.top = topPx + 'px';
+    noteDiv.style.width = (note.duration * tempoMultiplier * timeScale) + 'px';
+
+    if ((note.time * tempoMultiplier) + note.duration > maxTime) {
+      maxTime = (note.time * tempoMultiplier) + note.duration;
+    }
+  });
+
+  const contentWidth = Math.max((maxTime + negativePadding) * timeScale, timeline.clientWidth);
+  timelineContent.style.width = contentWidth + 'px';
+  timeRulerContent.style.width = contentWidth + 'px';
+}
+
   </script>
 </body>
 </html>
